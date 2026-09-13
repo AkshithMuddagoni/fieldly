@@ -93,3 +93,15 @@ See `DEPLOYMENT_GUIDE.md` Parts 1–2 for running both pieces locally
 (includes the full test walkthrough: create a request, send a quote from
 the provider dashboard, watch it flow through to a real booking), or
 Parts 3–6 for a full Render + Supabase deployment.
+
+
+
+
+psT7s469cgyX9t1H          postgresql://postgres.vufkdebbysbippzzzntb:[YOUR-PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+
+
+
+https://fieldly-ihsr.onrender.com/   backend
+
+
+https://fieldly-zv78.onrender.com/ frontend
