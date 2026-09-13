@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fieldly — provider dashboard (test tool)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body{font-family:-apple-system,Inter,Arial,sans-serif;max-width:640px;margin:40px auto;padding:0 20px;color:#171A1D;background:#EEF0EF;}
+  h1{font-size:22px;margin-bottom:4px;}
+  p.sub{color:#8B9195;font-size:13px;margin:0 0 20px;}
+  .card{background:#fff;border:1px solid #DADDDA;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:600;color:#565D62;margin-bottom:4px;}
+  input,textarea{width:100%;padding:9px 10px;border:1px solid #C3C7C4;border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box;}
+  button{background:#171A1D;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;}
+  button.secondary{background:transparent;color:#171A1D;border:1px solid #C3C7C4;}
+  .req{border-bottom:1px solid #DADDDA;padding:10px 0;}
+  .req:last-child{border-bottom:none;}
+  .req b{font-size:14px;}
+  .req small{display:block;color:#8B9195;font-size:12px;margin-top:2px;}
+  .muted{color:#8B9195;font-size:13px;}
+  .row{display:flex;gap:8px;}
+  .row > *{flex:1;}
+</style>
+</head>
+<body>
+  <h1>Provider dashboard (test tool)</h1>
+  <p class="sub">A plain HTML page for testing the request → quote loop without building the full provider app. Paste in a provider ID (from POST /api/v1/providers/ or Swagger) to see requests and send quotes.</p>
+
+  <div class="card">
+    <label>API base URL</label>
+    <input id="apiBase" value="" placeholder="https://your-backend.onrender.com">
+    <label>Provider ID</label>
+    <input id="providerId" placeholder="paste the provider's id here">
+    <button onclick="loadRequests()">Load open requests</button>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px;font-size:15px;">Provider login</h3>
+    <p class="muted" style="margin-bottom:10px;">The booking-lifecycle actions below require a real provider login — same phone number the provider was created with.</p>
+    <label>Phone (10 digits)</label>
+    <div class="row">
+      <input id="loginPhone" maxlength="10" placeholder="9000000001">
+      <button onclick="requestOtp()">Send OTP</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <input id="loginOtp" placeholder="OTP">
+      <button onclick="verifyOtp()">Verify & log in</button>
+    </div>
+    <p class="muted" id="loginStatus"></p>
+  </div>
+
+  <div class="card" id="requestsCard" style="display:none;">
+    <div id="requestsList"></div>
+  </div>
+
+  <div class="card" id="quoteCard" style="display:none;">
+    <label>Service request ID</label>
+    <input id="srId" readonly>
+    <label>Quote price (₹)</label>
+    <input id="quotePrice" type="number" placeholder="e.g. 38000">
+    <label>Message to customer</label>
+    <textarea id="quoteMessage" rows="3" placeholder="e.g. Can start tomorrow morning..."></textarea>
+    <div class="row">
+      <button onclick="submitQuote()">Send quote</button>
+      <button class="secondary" onclick="document.getElementById('quoteCard').style.display='none'">Cancel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px;font-size:15px;">Manage a booking</h3>
+    <label>Booking ID</label>
+    <input id="bookingId" placeholder="paste booking id here">
+    <div class="row">
+      <button onclick="bookingAction('on-the-way')">Mark on the way</button>
+      <button onclick="bookingAction('arrived')">Mark arrived</button>
+    </div>
+    <div style="margin-top:10px;">
+      <label>Start OTP (ask the customer to read it out)</label>
+      <div class="row">
+        <input id="startOtp" placeholder="4-digit code">
+        <button onclick="startService()">Start service</button>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <label>Final amount (₹)</label>
+      <input id="finalAmount" type="number" placeholder="e.g. 42800">
+      <label>Payment method</label>
+      <input id="paymentMethod" placeholder="cash / upi / card">
+      <button onclick="completeService()">Mark service complete</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="secondary" onclick="getBooking()">Refresh booking status</button>
+      <button class="secondary" onclick="cancelBooking()">Cancel booking</button>
+    </div>
+    <pre id="bookingState" style="white-space:pre-wrap;font-size:11.5px;color:#565D62;margin-top:10px;"></pre>
+  </div>
+
+  <p class="muted" id="status"></p>
+
+<script>
+document.getElementById('apiBase').value = window.location.origin;
+
+function api(){ return document.getElementById('apiBase').value.replace(/\/$/,''); }
+
+async function loadRequests(){
+  const providerId = document.getElementById('providerId').value.trim();
+  if(!providerId){ setStatus('Enter a provider ID first.'); return; }
+  setStatus('Loading...');
+  try{
+    const pres = await fetch(api()+'/api/v1/providers/'+providerId);
+    if(!pres.ok) throw new Error('Provider not found');
+    const provider = await pres.json();
+
+    const rres = await fetch(api()+'/api/v1/service-requests/?provider_id='+encodeURIComponent(providerId));
+    if(!rres.ok) throw new Error('Could not load requests');
+    const requests = await rres.json();
+
+    document.getElementById('requestsCard').style.display='block';
+    let html = '<div class="req"><b>'+provider.business_name+'</b><small>'+provider.city+', '+provider.state+' &middot; status: '+provider.verification_status+'</small></div>';
+    if(requests.length === 0){
+      html += '<p class="muted">No open requests for this provider right now.</p>';
+    } else {
+      requests.forEach(r => {
+        html += '<div class="req"><b>'+r.location_label+'</b>'
+          + '<small>status: '+r.status+' &middot; submitted '+new Date(r.created_at).toLocaleString()+'</small>'
+          + (r.notes ? '<small>"'+r.notes+'"</small>' : '')
+          + '<button style="margin-top:8px" onclick="showQuoteForm(\''+r.id+'\')">Send quote</button></div>';
+      });
+    }
+    document.getElementById('requestsList').innerHTML = html;
+    setStatus('');
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+function showQuoteForm(srId){
+  if(!srId){
+    srId = prompt('Paste the service request ID:');
+    if(!srId) return;
+  }
+  document.getElementById('srId').value = srId;
+  document.getElementById('quoteCard').style.display='block';
+  document.getElementById('quoteCard').scrollIntoView({behavior:'smooth'});
+}
+
+async function submitQuote(){
+  const providerId = document.getElementById('providerId').value.trim();
+  const srId = document.getElementById('srId').value.trim();
+  const price = parseFloat(document.getElementById('quotePrice').value);
+  const message = document.getElementById('quoteMessage').value;
+  if(!srId || !price){ setStatus('Service request ID and price are required.'); return; }
+  setStatus('Sending quote...');
+  try{
+    const res = await fetch(api()+'/api/v1/quotes/?provider_id='+encodeURIComponent(providerId), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({service_request_id: srId, price: price, message: message})
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Failed to send quote');
+    setStatus('Quote sent. The customer will see it in their Waiting screen.');
+    document.getElementById('quoteCard').style.display='none';
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+
+let providerToken = null;
+
+async function requestOtp(){
+  const phone = document.getElementById('loginPhone').value.trim();
+  document.getElementById('loginStatus').textContent = 'Sending...';
+  try{
+    const res = await fetch(api()+'/api/v1/auth/request-otp', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({phone})});
+    const data = await res.json();
+    document.getElementById('loginStatus').textContent = 'Test OTP: ' + (data.dev_hint || '(check server console)');
+    if(data.dev_hint) document.getElementById('loginOtp').value = data.dev_hint;
+  }catch(e){ document.getElementById('loginStatus').textContent = 'Error: '+e.message; }
+}
+
+async function verifyOtp(){
+  const phone = document.getElementById('loginPhone').value.trim();
+  const otp = document.getElementById('loginOtp').value.trim();
+  try{
+    const res = await fetch(api()+'/api/v1/auth/verify-otp', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({phone, otp, role:'provider'})});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Login failed');
+    providerToken = data.access_token;
+    document.getElementById('loginStatus').textContent = 'Logged in as ' + (data.name || phone);
+  }catch(e){ document.getElementById('loginStatus').textContent = 'Error: '+e.message; }
+}
+
+function authHeaders(){
+  if(!providerToken) throw new Error('Log in above first');
+  return {'Content-Type':'application/json', 'Authorization':'Bearer '+providerToken};
+}
+
+async function bookingAction(action){
+  const id = document.getElementById('bookingId').value.trim();
+  if(!id){ setStatus('Enter a booking ID.'); return; }
+  try{
+    const res = await fetch(api()+'/api/v1/bookings/'+id+'/'+action, {method:'POST', headers: authHeaders()});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Action failed');
+    document.getElementById('bookingState').textContent = JSON.stringify(data, null, 2);
+    setStatus('Booking is now: ' + data.status);
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+async function startService(){
+  const id = document.getElementById('bookingId').value.trim();
+  const otp = document.getElementById('startOtp').value.trim();
+  try{
+    const res = await fetch(api()+'/api/v1/bookings/'+id+'/start', {method:'POST', headers: authHeaders(), body: JSON.stringify({otp})});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Could not start service');
+    document.getElementById('bookingState').textContent = JSON.stringify(data, null, 2);
+    setStatus('Service started.');
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+async function completeService(){
+  const id = document.getElementById('bookingId').value.trim();
+  const final_amount = parseFloat(document.getElementById('finalAmount').value);
+  const payment_method = document.getElementById('paymentMethod').value.trim();
+  try{
+    const res = await fetch(api()+'/api/v1/bookings/'+id+'/complete', {method:'POST', headers: authHeaders(), body: JSON.stringify({final_amount, payment_method})});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Could not complete service');
+    document.getElementById('bookingState').textContent = JSON.stringify(data, null, 2);
+    setStatus('Service marked complete.');
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+async function cancelBooking(){
+  const id = document.getElementById('bookingId').value.trim();
+  try{
+    const res = await fetch(api()+'/api/v1/bookings/'+id+'/cancel', {method:'POST', headers: authHeaders()});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Could not cancel');
+    document.getElementById('bookingState').textContent = JSON.stringify(data, null, 2);
+    setStatus('Booking cancelled.');
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+
+async function getBooking(){
+  const id = document.getElementById('bookingId').value.trim();
+  try{
+    const res = await fetch(api()+'/api/v1/bookings/'+id, {headers: authHeaders()});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Could not load booking');
+    document.getElementById('bookingState').textContent = JSON.stringify(data, null, 2);
+    setStatus('');
+  }catch(e){ setStatus('Error: '+e.message); }
+}
+</script>
+</body>
+</html>
